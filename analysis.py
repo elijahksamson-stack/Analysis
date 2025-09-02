@@ -1,4 +1,3 @@
-# above the start of the split layout, and below the tickers entry box. Please use plotly to plot the price graph on one graph for each of the securities in the list for the last 1y: 
 
 # fundtech_app.py
 # Streamlit app: Fundamentals + Technical Rank composite scoring with liquidity check + correlation heatmap
@@ -17,6 +16,7 @@ import yfinance as yf
 from bs4 import BeautifulSoup
 import matplotlib.pyplot as plt
 import seaborn as sns
+from plotly import graph_objs as go
 
 # ==========================
 # ---- UI CONFIG -----------
@@ -209,6 +209,38 @@ run_btn = st.button("Run Scoring", type="primary")
 # ---- Pipeline ------------
 # ==========================
 if run_btn:
+    # ==== Price charts (1Y) placed below tickers and ABOVE the split layout ====
+    st.subheader("Price Charts — Last 1 Year")
+    try:
+        px = yf.download(tickers, period="1y", interval="1d", progress=False, auto_adjust=True)
+        # Normalize to a DataFrame of Close prices
+        if isinstance(px, pd.DataFrame) and ("Close" in px.columns):
+            close_df = px["Close"]
+        else:
+            # single ticker returns a Series sometimes
+            if isinstance(px, pd.Series):
+                close_df = px.to_frame(name=tickers[0])
+            else:
+                close_df = pd.DataFrame()
+        if isinstance(close_df, pd.Series):
+            close_df = close_df.to_frame(name=tickers[0])
+        # Create one Plotly chart per ticker
+        if not close_df.empty:
+            tab_objs = st.tabs([t for t in tickers])
+            for i, t in enumerate(tickers):
+                with tab_objs[i]:
+                    if t in close_df.columns:
+                        s = close_df[t].dropna()
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(x=s.index, y=s.values, mode="lines", name=t))
+                        fig.update_layout(margin=dict(l=10,r=10,t=30,b=10), height=300, title=f"{t} — Close (1Y)")
+                        st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No price data returned for the requested period.")
+    except Exception as e:
+        st.error(f"Could not render 1Y price charts: {e}")
+
+    # ==== Continue with
     with st.spinner("Fetching fundamentals…"):
         fdf = fetch_fundamentals(tickers)
     if fdf.empty:
@@ -256,18 +288,42 @@ if run_btn:
     with right_col:
         st.subheader("Correlation Heatmap of Daily % Changes")
         try:
-            data = yf.download(tickers, period="6mo", interval="1d", progress=False, auto_adjust=False)
-            # Fallback: if Adj Close not available, use Close
-            if "Adj Close" in data.columns:
-                px = data["Adj Close"]
+            data = yf.download(
+                tickers, period="6mo", interval="1d",
+                progress=False, auto_adjust=False
+            )
+    
+            # Normalize to a 2D price frame regardless of shape
+            if isinstance(data, pd.Series):
+                # single ticker, single column edge case
+                px = data.to_frame(name=tickers[0])
+            elif isinstance(data.columns, pd.MultiIndex):
+                # Multi-ticker: columns like ('Adj Close','AAPL'), ...
+                top_levels = data.columns.get_level_values(0).unique()
+                if "Adj Close" in top_levels:
+                    px = data["Adj Close"]
+                elif "Close" in top_levels:
+                    px = data["Close"]
+                else:
+                    raise KeyError("Neither 'Adj Close' nor 'Close' found in multi-index columns.")
             else:
-                px = data["Close"]
+                # Single-level columns (rare)
+                if "Adj Close" in data.columns:
+                    px = data[ "Adj Close" ]
+                elif "Close" in data.columns:
+                    px = data[ "Close" ]
+                else:
+                    raise KeyError("Neither 'Adj Close' nor 'Close' found in columns.")
+    
+            # Ensure DataFrame (not Series) for downstream ops
+            if isinstance(px, pd.Series):
+                px = px.to_frame(name=tickers[0])
+    
             returns = px.pct_change().dropna()
             corr = returns.corr()
     
             import matplotlib.pyplot as plt
             import seaborn as sns
-    
             fig, ax = plt.subplots(figsize=(6, 5))
             sns.heatmap(corr, annot=True, cmap="coolwarm", center=0, ax=ax)
             st.pyplot(fig)
