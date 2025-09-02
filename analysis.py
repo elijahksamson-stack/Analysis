@@ -20,10 +20,10 @@ from plotly import graph_objs as go
 # ==========================
 # ---- UI CONFIG -----------
 # ==========================
-st.set_page_config(page_title="Stock Dashboard", page_icon="📍", layout="wide")
+st.set_page_config(page_title="Fund+Tech Rank", page_icon="📊", layout="wide")
 
-st.title("Analysis Dashboard")
-st.caption("Composite scoring table, liquidity check, and heat map showing the correlation of price change among the list of securities.")
+st.title("📊 Fundamentals + Technical Rank — Scoring + Liquidity + Correlation")
+st.caption("Composite scoring table, liquidity check, and correlation heatmap of price changes.")
 
 # ==========================
 # ---- Fundamentals Scraper ----------
@@ -239,7 +239,7 @@ if run_btn:
     except Exception as e:
         st.error(f"Could not render 1Y price charts: {e}")
 
-    # ==== Continue with
+    # ==== Continue with fundamentals/technicals/scoring ====
     with st.spinner("Fetching fundamentals…"):
         fdf = fetch_fundamentals(tickers)
     if fdf.empty:
@@ -253,14 +253,21 @@ if run_btn:
     with st.spinner("Computing Technical Rank…"):
         tr = compute_trank_for_list(tickers)
 
-    combo = fdf[["Ticker"]].merge(fscore[["Ticker","FundamentalScore"]], on="Ticker", how="left").merge(tr[["Ticker","TRank","Close","AvgVol20"]], on="Ticker", how="left")
+    # Build from full input universe so we don't drop tickers with missing fundamentals
+    base = pd.DataFrame({"Ticker": tickers})
+    combo = (
+        base
+        .merge(fscore[["Ticker","FundamentalScore"]], on="Ticker", how="left")
+        .merge(tr[["Ticker","TRank","Close","AvgVol20"]], on="Ticker", how="left")
+    )
     combo["TRank_0to1"] = combo["TRank"] / 100.0
     combo["Score"] = 0.7 * combo["FundamentalScore"] + 0.3 * combo["TRank_0to1"]
 
-    # Liquidity check
+    # Liquidity check (guard against zero / NaN)
     invest_amt = 30_000_000
     threshold_pct = 15.0
     combo["DollarVol20"] = combo["AvgVol20"] * combo["Close"]
+    combo["DollarVol20"] = combo["DollarVol20"].replace({0: np.nan})
     combo["PctOfDaily$Vol"] = (invest_amt / combo["DollarVol20"]) * 100.0
     combo["IlliquidFlag"] = combo["PctOfDaily$Vol"] > threshold_pct
 
@@ -287,45 +294,11 @@ if run_btn:
     with right_col:
         st.subheader("Correlation Heatmap of Daily % Changes")
         try:
-            data = yf.download(
-                tickers, period="6mo", interval="1d",
-                progress=False, auto_adjust=False
-            )
-    
-            # Normalize to a 2D price frame regardless of shape
-            if isinstance(data, pd.Series):
-                # single ticker, single column edge case
-                px = data.to_frame(name=tickers[0])
-            elif isinstance(data.columns, pd.MultiIndex):
-                # Multi-ticker: columns like ('Adj Close','AAPL'), ...
-                top_levels = data.columns.get_level_values(0).unique()
-                if "Adj Close" in top_levels:
-                    px = data["Adj Close"]
-                elif "Close" in top_levels:
-                    px = data["Close"]
-                else:
-                    raise KeyError("Neither 'Adj Close' nor 'Close' found in multi-index columns.")
-            else:
-                # Single-level columns (rare)
-                if "Adj Close" in data.columns:
-                    px = data[ "Adj Close" ]
-                elif "Close" in data.columns:
-                    px = data[ "Close" ]
-                else:
-                    raise KeyError("Neither 'Adj Close' nor 'Close' found in columns.")
-    
-            # Ensure DataFrame (not Series) for downstream ops
-            if isinstance(px, pd.Series):
-                px = px.to_frame(name=tickers[0])
-    
-            returns = px.pct_change().dropna()
+            data = yf.download(tickers, period="6mo", interval="1d", progress=False)["Adj Close"]
+            returns = data.pct_change().dropna()
             corr = returns.corr()
-    
-            import matplotlib.pyplot as plt
-            import seaborn as sns
             fig, ax = plt.subplots(figsize=(6, 5))
             sns.heatmap(corr, annot=True, cmap="coolwarm", center=0, ax=ax)
             st.pyplot(fig)
         except Exception as e:
             st.error(f"Heatmap generation failed: {e}")
-
