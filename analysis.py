@@ -1,4 +1,4 @@
-above the start of the split layout, and below the tickers entry box. Please use plotly to plot the price graph on one graph for each of the securities in the list for the last 1y: 
+# above the start of the split layout, and below the tickers entry box. Please use plotly to plot the price graph on one graph for each of the securities in the list for the last 1y: 
 
 # fundtech_app.py
 # Streamlit app: Fundamentals + Technical Rank composite scoring with liquidity check + correlation heatmap
